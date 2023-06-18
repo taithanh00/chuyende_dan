@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Model;
 class Food extends Model
 {
     use HasFactory;
+    public $timestamps = false;
+
     protected $fillable = [
         'food_name',
         'food_money',
@@ -15,4 +17,5 @@ class Food extends Model
         'type_id',
         'Change'
     ];
+    protected $primaryKey = 'food_id';
 }

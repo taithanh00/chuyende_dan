@@ -10,25 +10,31 @@ use App\Models\UserTable;
 use App\Models\User;
 use App\Models\Type;
 use App\Models\Food;
+use App\Models\Tables;
 use App\Models\ListOrder;
 use Illuminate\Support\Facades\Session;
+use Carbon\Carbon;
 
 class FrontEndController extends Controller
 {
     public $total_price;
     public function Index(Request $request)
     {
-        //session(['total_price' => 0]);
-        $types = DB::table('type')->get()->toArray();
-        $foods = DB::table('food')->get()->toArray();
-        $total_price = session('total_price');
-        $login_email = Session::get('login_email');
+        $price_final = session('price_final');
         $foodss = DB::table('food')
-        ->join('type', 'food.type_id', '=', 'type.type_id')
-        ->where('type.type_name', $request->type_name)
-        ->select('food.food_name as name', 'food.image as image_url', 'food.food_money as price')
-        ->get();
-        return view('frontend.layouts.index', ['login_email' => $login_email], compact('types', 'foods', 'total_price', 'login_email','foodss'));
+            ->join('type', 'food.type_id', '=', 'type.type_id')
+            ->where('type.type_name', $request->type_name)
+            ->select('food.food_name as name', 'food.image as image_url', 'food.food_money as price')
+            ->get();
+
+        session()->put('foodss', $foodss);
+        // dd($price_final);
+        $types = DB::table('type')->get();
+        $foods = DB::table('food')->get();
+        $total_price = session('total_price');
+        $login_email = session('login_email');
+
+        return view('frontend.layouts.index', compact('login_email', 'types', 'foods', 'foodss', 'total_price', 'price_final'));
     }
     public function Login_Register(Request $request)
     {
@@ -46,12 +52,7 @@ class FrontEndController extends Controller
             $response = redirect()->route('index');
             $response->send();
         } else {
-            // return redirect()->back()->with('error', 'Invalid username or password')->withInput();
-            // $response = redirect()->route('frontendlogin')->with('message', 'Login Failed');
-            // $response->send();
-            // $responsefail = redirect()->route('frontendlogin')->with('message', 'Login Failed');
-            // $responsefail->send();
-            // echo 'Type again';
+            // echo 'dont complete';
         }
         // Store the email in the session
         Session::put('login_email', $login_input_email);
@@ -60,8 +61,17 @@ class FrontEndController extends Controller
     }
     //register
     //logout
+    public function Logout(Request $request)
+    {
+        // Xóa thông tin đăng nhập khỏi session
+        $request->session()->forget('username');
+
+        // Chuyển hướng người dùng đến trang đăng nhập hoặc trang khác tùy ý
+        return redirect()->route('login');
+    }
     public function CheckType(Request $request)
     {
+        $price_final = session('price_final');
         $login_email = Session::get('login_email');
         $types = DB::table('type')->get()->toArray();
         $foods = DB::table('food')->get()->toArray();
@@ -74,52 +84,107 @@ class FrontEndController extends Controller
             ->select('food.food_name as name', 'food.image as image_url', 'food.food_money as price')
             ->get();
         Session::put('foodss', $foodss);
-        return view('frontend.layouts.index', compact('login_email', 'types', 'foods', 'total_price', 'id_types', 'foodss'));
+        return view('frontend.layouts.index', compact('login_email', 'types', 'foods', 'total_price', 'id_types', 'foodss', 'price_final'));
     }
     public function AddToCart(Request $request)
     {
-        dd($request->food_name);
-        $types = DB::table('type')->get()->toArray();
-        $foods = DB::table('food')->get()->toArray();
-        $lists_order = DB::table('list_order')->get()->toArray();
-        $list_order_name = DB::table('list_order')->pluck('food_name')->toArray();
-        $total_price = 0;
-        $food_id = $request->category_id;
-        $request->validate([
-            'food_id' => 'required',
-            'image' => '',
-            'food_name' => '',
-            'food_money' => ''
+        $name = $request->input('name');
+        $price = $request->input('price');
+        if (DB::table('list_order')->where('food_name', $name)->exists()) {
+            DB::table('list_order')->where('food_name', $name)->increment('quantity');
+            $quantity = DB::table('list_order')->where('food_name', $name)->value('quantity');
+            $total_price = $price * $quantity;
+            DB::table('list_order')->where('food_name', $name)->update(['total_price' => $total_price]);
+        } else {
+            $list_order = new ListOrder;
+            $list_order->food_name = $name;
+            $list_order->food_money = $price;
+            $list_order->quantity = 1;
+            $list_order->total_price = $list_order->food_money * $list_order->quantity;
+            $list_order->save();
+        }
 
-        ]);
-        // Get the previous total price from session
-        $total_price = session('total_price', 0);
-        // Add the new product price to the total priceư
-        $total_price += $request->food_money;
-        // Store the updated total price in session
-        session(['total_price' => $total_price]);
-        $found = false;
-        foreach ($list_order_name as $name) {
-            if ($name == $request->food_name) {
-                DB::table('list_order')->where('food_name', $request->food_name)->increment('quantity');
-                $found = true;
-                break;
-            }
+        $list_orders = DB::table('list_order')->select('food_money', 'quantity')->get();
+        $price_final = 0;
+
+        foreach ($list_orders as $order) {
+            $price_final += $order->food_money * $order->quantity;
         }
-        if (!$found) {
-            ListOrder::insert([
-                'food_name' => $request->food_name,
-                'food_money' => $request->food_money,
-                'quantity' => 1,
-                'total_price' => $request->food_money
-            ]);
-        }
-        return redirect()->route('index', compact('total_price', 'types', 'foods','foodss'));
+
+        session()->put('price_final', $price_final);
+        return redirect()->route('index', compact('price_final'));
     }
     public function FindTable()
     {
+        $login_email = session('login_email');
+        $price_final = session('price_final');
         $total_price = session('total_price');
         $list_final = ListOrder::latest()->get();
-        return view('frontend.layouts.table', compact('total_price', 'list_final'));
+        $list_final_created_at = DB::table('list_order')->pluck('created_at')->first();
+        $list_final_created_at2 = DB::table('list_order')->pluck('created_at')->last();
+        // dd($list_final_created_at);
+        $time = Carbon::createFromFormat('Y-m-d H:i:s', $list_final_created_at)->format('H:i:s');
+        $time2 = Carbon::createFromFormat('Y-m-d H:i:s', $list_final_created_at2)->format('H:i:s');
+        return view('frontend.layouts.table', compact('total_price', 'list_final', 'price_final', 'login_email', 'list_final_created_at', 'time', 'time2'));
+    }
+    public function Confirm(Request $request)
+    {
+        $price_final = session('price_final');
+        $login_email = session('login_email');
+        $foodss = session('foodss');
+        $list_final = DB::table('list_order')->pluck('food_name')->toArray();
+        $list_final2 = DB::table('list_order')->pluck('food_money')->toArray();
+        $list_final3 = DB::table('list_order')->pluck('total_price')->toArray();
+        $types = DB::table('type')->get()->toArray();
+
+        $data = [];
+
+        foreach ($list_final as $key => $item) {
+            $data[] = [
+                'table_number' => $login_email,
+                'list_order' => $item . ' - ' . $list_final2[$key] . ' - ' . $list_final3[$key],
+                'created_at' => now(),
+                'updated_at' => now()
+            ];
+        }
+
+        DB::table('usertable_order')->insert($data);
+        foreach ($list_final as $key => $item) {
+            DB::table('list_order')->where('food_name', $item)
+                ->where('food_money', $list_final2[$key])
+                ->where('total_price', $list_final3[$key])
+                ->delete();
+        }
+        session()->put('price_final', 0);
+
+        // return view('frontend.layouts.index', compact('login_email', 'types', 'foodss','price_final'));
+        return redirect()->route('index', compact('login_email', 'types', 'foodss', 'price_final'))->with('success', 'Checkout Successfully');
+    }
+    public function Alltable()
+    {
+        $tables = Tables::all();
+        $get_value = session('get_value');
+        return view('frontend.layouts.alltable', compact('tables', 'get_value'));
+    }
+    public function AlltableFind(Request $request)
+    {
+        $value = $request->input('table');
+        $tables = Tables::all();
+        $get_value = DB::table('usertable_order')
+            ->where('table_number', $value)
+            ->pluck('list_order')
+            ->all();
+
+        session()->put('get_value', $get_value);
+        if ($get_value) {
+            return view('frontend.layouts.alltable', compact('tables', 'get_value'));
+        } else {
+            return 'Không tìm thấy giá trị';
+        }
+    }
+    public function Admin()
+    {
+        $list_orders = ListOrder::select('food_name', 'quantity')->get();
+        return view('frontend.layouts.admin.guruable-master.index', compact('list_orders'));
     }
 }
